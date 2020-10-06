@@ -13,8 +13,12 @@ dynamic_skins_manager = {
     region_to_major_or_minor = require("script/dss/tables/region_to_major_or_minor"),
     subculture_to_group =      require("script/dss/tables/subculture_to_group"),
     do_nothing_regions =       require("script/dss/tables/do_nothing_regions"),
+    disable_dwarfs_table =     require("script/dss/tables/disable_dwarfs"),
 
-    current_displays = {}
+    current_displays = {},
+
+    -- MCT option-out for the fudged up rotation skins
+    disable_dwarfs = true,
 } 
 
 function dynamic_skins_manager:log(text)
@@ -119,7 +123,7 @@ function dynamic_skins_manager:get_current_display_for_region(region_name)
 end
 
 function dynamic_skins_manager:is_region_do_nothing(region_name)
-    return self.do_nothing_regions[region_name] or false
+    return self.do_nothing_regions[region_name]
 end
 
 function dynamic_skins_manager:is_region_major(region_name)
@@ -127,44 +131,79 @@ function dynamic_skins_manager:is_region_major(region_name)
 end
 
 -- build a string for the new_display
-function dynamic_skins_manager:form_display_string(region_name, occupying_subculture)
+function dynamic_skins_manager:form_display_string(region_obj)
     local new_display
+    local region_name = region_obj:name()
 
-    if not occupying_subculture then
-        new_display = cm:get_region(region_name):settlement():primary_building_chain()
+    --if not occupying_subculture then
+    --    new_display = cm:get_region(region_name):settlement():primary_building_chain()
+    --else
+
+    local original_subculture = self:get_original_subculture_with_region(region_name)
+    local original_grouped_culture = self:get_grouped_culture(original_subculture)
+    local occupying_subculture = region_obj:owning_faction():subculture()
+    local occupying_grouped_culture = self:get_grouped_culture(occupying_subculture)
+    
+    local suffix --: string
+
+    if self:is_region_unique(region_name) then
+        suffix = region_name
+    elseif self:is_region_major(region_name) then
+        suffix = "major"
     else
-        local original_subculture = self:get_original_subculture_with_region(region_name)
-        local original_grouped_culture = self:get_grouped_culture(original_subculture)
-        local occupying_grouped_culture = self:get_grouped_culture(occupying_subculture)
-        
-        local suffix --: string
-
-        if self:is_region_unique(region_name) then
-            suffix = region_name
-        elseif self:is_region_major(region_name) then
-            suffix = "major"
-        else
-            suffix = "minor"
-        end
-
-        new_display = original_grouped_culture .. "_" .. occupying_grouped_culture .. "_" .. suffix
+        suffix = "minor"
     end
+
+    new_display = original_grouped_culture .. "_" .. occupying_grouped_culture .. "_" .. suffix
+    --end
 
     return new_display
 end
 
 -- internal func to actually override the display chain
-function dynamic_skins_manager:override_chain_display(region_name, occupying_subculture)
-    local old_display = cm:get_region(region_name):settlement():display_primary_building_chain()
-    local new_display = self:form_display_string(region_name, occupying_subculture)
+function dynamic_skins_manager:override_chain_display(region_obj)
+    local region_name = region_obj:name()
+    local settlement = region_obj:settlement()
 
+    if region_obj:is_abandoned() or region_obj:owning_faction():is_null_interface() then
+        return
+    end
+
+    local old_display = settlement:display_primary_building_chain()
+    --[[local dss_display = ""
+    if self:get_current_display_for_region(region_name) ~= "" then
+        dss_display = self:get_current_display_for_region(region_name)
+    end]]
+
+    local building_chain = settlement:primary_building_chain()
+
+    local new_display = self:form_display_string(region_obj)
+
+    if self:is_region_do_nothing(region_name) then
+        -- keep at vanilla!
+        --cm:override_building_chain_display(old_display, old_display, region_name)
+        --cm:override_building_chain_display(building_chain, building_chain, region_name)
+        return
+    end
+
+    self:log("====\nChanging display chain for region ["..region_name.."]")
     self:log("Old Display Key: [" .. old_display .. "]")
     self:log("Current Display Key: [" .. self:get_current_display_for_region(region_name) .. "]")
     self:log("New Display Key: [" .. new_display .. "]")
 
     cm:override_building_chain_display(old_display, new_display, region_name)
+    cm:override_building_chain_display(building_chain, new_display, region_name)
 
     self.current_displays[region_name] = new_display
+end
+
+function dynamic_skins_manager:dwarf_disable()
+    local settlements_to_disable = self.disable_dwarfs_table
+
+    for i = 1, #settlements_to_disable do
+        local region_key = settlements_to_disable[i]
+        self:set_region_as_do_nothing(region_key, self.disable_dwarfs)
+    end
 end
 
 
@@ -218,16 +257,15 @@ function dynamic_skins_manager:init()
     self:log("------ BEGINNING THE FIRST TURN LOOP.")
     for i = 0, region_list:num_items() - 1 do
         local current_region = region_list:item_at(i)
-        local current_owner_subculture = current_region:owning_faction():subculture()
 
-        if self:is_region_do_nothing(current_region:name()) then
+        --if self:is_region_do_nothing(current_region:name()) then
             -- skip!
-        else
-            if self:is_subculture_occupying(current_region:name(), current_owner_subculture) then
-                self:log("[" .. current_region:name() .. "] is being occupied by [" .. current_owner_subculture .. "], beginning override!") 
-                self:override_chain_display(current_region:name(), current_owner_subculture)
-            end
-        end
+        --else
+            --if self:is_subculture_occupying(current_region:name(), current_owner_subculture) then
+                --self:log("[" .. current_region:name() .. "] is being occupied by [" .. current_owner_subculture .. "], beginning override!") 
+        self:override_chain_display(current_region)
+            --end
+        --end
     end
     self:log("------- ENDING THE FIRST TURN LOOP.")
 
@@ -237,8 +275,9 @@ end
 -- main loop for the mod
 function dynamic_skins_manager:main()
     self:log("DSS - main loop beginning.")
+    self:dwarf_disable()
 
-    if not cm:get_saved_value("dss_init") then 
+    --if not cm:get_saved_value("dss_init") then 
         self:log("DSS starting the new game procedures.")
         local ok, err = pcall(function()
             self:init()
@@ -246,17 +285,71 @@ function dynamic_skins_manager:main()
         if not ok then
             self:log(err)
         end
-    end
+    --end
+
+    core:add_listener(
+        "DssRegionChangeEvent",
+        "RegionFactionChangeEvent",
+        true,
+        function(context)
+            local region = context:region()
+            local region_key = region:name()
+            local previous_faction = context:previous_faction()
+            local new_faction = region:owning_faction()
+
+            if region:is_abandoned() or new_faction:is_null_interface() then
+                --self.current_displays[region_key] = "abandoned"
+                return
+            end
+
+            local new_subculture = new_faction:subculture()
+
+            --if self:is_subculture_occupying(region_key, new_subculture) then
+                cm:callback(function()
+                    self:override_chain_display(region)
+                end, 1.0)
+            --end
+        end,
+        true
+    )
+
+    --[[core:add_listener(
+        "DssCheckAbandonedRegion",
+        "RegionTurnStart",
+        function(context)
+            local r = context:region()
+            return r:is_abandoned() and not self:get_current_display_for_region(r:name()) == "abandoned"
+        end,
+        function(context)
+            local r = context:region()
+            self.current_displays[r:name()] = "abandoned"
+        end,
+        true
+    )
 
     core:add_listener(
         "DssCheckChangeOwnership",
         "RegionTurnStart",
         function(context)
-            local region_name = context:region():name()
+            local region = context:region()
+            local region_name = region:name()
             if self:is_region_do_nothing(region_name) then
                 return false
             end
-            local owning_subculture = context:region():owning_faction():subculture()
+
+            if region:is_abandoned() then
+                self.current_displays[region_name] = "abandoned"
+                return false
+            end
+
+            local of = region:owning_faction()
+
+            -- failsafe in case a region isn't abandoned but has a null interface faction - should never happen, but here we are
+            if of:is_null_interface() then
+                return false
+            end
+
+            local owning_subculture = of:subculture()
             return self:is_subculture_occupying(region_name, owning_subculture)
         end,
         function(context)
@@ -268,7 +361,7 @@ function dynamic_skins_manager:main()
             self:override_chain_display(region_name, occupying_subculture)
         end,
         true
-    )
+    )]]
 end
 
 function get_dynamic_skins_manager()
@@ -279,6 +372,36 @@ _G.get_dynamic_skins_manager = get_dynamic_skins_manager
 
 cm:add_first_tick_callback(function()
     dynamic_skins_manager:main()
+
+    core:add_listener(
+        "print_settlement_selected",
+        "SettlementSelected",
+        true,
+        function(context)
+            local r = context:garrison_residence():region()
+            local name = r:name()
+
+            if is_function(devtool_log) then
+                devtool_log("Region Selected: ["..name .. "]\nCurrent display key: [" .. dynamic_skins_manager:get_current_display_for_region(name).."]\n")
+            end
+        end,
+        true
+    )
+
+    core:add_listener(
+        "print_region_selected",
+        "RegionSelected",
+        true,
+        function(context)
+            local r = context:region()
+            local name = r:name()
+
+            if is_function(devtool_log) then
+                devtool_log("Region Selected: ["..name .. "]\nCurrent display key: [" .. dynamic_skins_manager:get_current_display_for_region(name).."]\n")
+            end
+        end,
+        true
+    )
 end)
 
 

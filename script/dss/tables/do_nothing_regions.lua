@@ -5,7 +5,7 @@
 -- dss:set_region_as_do_nothing(region_name, do_nothing)
 
 local do_nothing_regions = {
-    -- Ulthuan gates
+--[[    -- Ulthuan gates
     wh2_main_eagle_gate = true,
     wh2_main_griffon_gate = true,
     wh2_main_phoenix_gate = true,
@@ -22,7 +22,7 @@ local do_nothing_regions = {
 
     -- Black Pyramid of Nagash 
     wh2_main_vor_great_mortis_delta_black_pyramid_of_nagash = true,
-    wh2_main_great_mortis_delta_black_pyramid_of_nagash = true
+    wh2_main_great_mortis_delta_black_pyramid_of_nagash = true]]
 }
 
 return do_nothing_regions
